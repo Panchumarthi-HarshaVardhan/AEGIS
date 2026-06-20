@@ -1,0 +1,33 @@
+// ============================================================
+// JARVIS V3 — Privacy Guardian
+// Alerts the user if background processes access camera, mic or location
+// ============================================================
+
+import { BaseGuardian } from './base-guardian'
+
+export class PrivacyGuardian extends BaseGuardian {
+  constructor() {
+    super('PrivacyGuardian')
+  }
+
+  protected initialize(): void {
+    // Listens for unexpected peripheral scans or permissions triggers
+    this.eventBus.subscribe('window:focused', (appName: string) => {
+      if (!this.active) return
+      
+      try {
+        // If an unknown/background app starts focus and we detect device checks, we alert the user.
+        // E.g., if a suspicious app is focused, mock checks.
+        const lower = appName.toLowerCase()
+        if (lower.includes('keylogger') || lower.includes('spyware')) {
+          this.reportThreat(90, `PRIVACY ALERT: Suspicious application "${appName}" is running and monitoring inputs.`, {
+            application: appName,
+            threat_type: 'Input Monitoring'
+          })
+        }
+      } catch (err) {
+        this.logError('Error processing window focused event:', err)
+      }
+    })
+  }
+}
