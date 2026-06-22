@@ -82,15 +82,42 @@ export class PythonBackendService implements ManagedService {
   private pythonProcess: ChildProcess | null = null;
   private isShuttingDown: boolean = false;
   private restartTimeout: ReturnType<typeof setTimeout> | null = null;
+  private restartCount: number = 0;
+  private readonly MAX_RESTARTS = 5;
 
   async start() {
     this.isShuttingDown = false;
+    this.restartCount = 0;
+    await this.killExistingPortProcess();
     this.spawnProcess();
+  }
+
+  /** Kill any existing process occupying port 8000 before spawning */
+  private async killExistingPortProcess(): Promise<void> {
+    const port = process.env.PORT || '8000';
+    try {
+      const { exec } = require('child_process');
+      await new Promise<void>((resolve) => {
+        const cmd = process.platform === 'win32'
+          ? `for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port}') do taskkill /F /PID %a`
+          : `lsof -ti :${port} | xargs kill -9 2>/dev/null`;
+        exec(cmd, { timeout: 3000 }, () => resolve());
+      });
+      // Brief wait for port to free up
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch {
+      // Ignore errors — port may not be occupied
+    }
   }
 
   private spawnProcess() {
     if (this.isShuttingDown) return;
     
+    if (this.restartCount >= this.MAX_RESTARTS) {
+      console.error(`[PythonBackendService] Exceeded max restart attempts (${this.MAX_RESTARTS}). Giving up.`);
+      return;
+    }
+
     const pythonScript = join(app.getAppPath(), 'backend/main.py');
     let pythonBin = 'python3';
     const venvPath = join(app.getAppPath(), 'backend', 'venv', 'bin', 'python');
@@ -129,10 +156,13 @@ export class PythonBackendService implements ManagedService {
     this.pythonProcess.on('exit', (code, signal) => {
       this.pythonProcess = null;
       if (!this.isShuttingDown) {
-        console.warn(`[PythonBackendService] Process exited unexpectedly with code ${code} (signal: ${signal}). Restarting in 5s...`);
-        // Cleanup and schedule restart
+        this.restartCount++;
+        console.warn(`[PythonBackendService] Process exited unexpectedly with code ${code} (signal: ${signal}). Restart attempt ${this.restartCount}/${this.MAX_RESTARTS} in 5s...`);
         if (this.restartTimeout) clearTimeout(this.restartTimeout);
-        this.restartTimeout = setTimeout(() => this.spawnProcess(), 5000);
+        this.restartTimeout = setTimeout(async () => {
+          await this.killExistingPortProcess();
+          this.spawnProcess();
+        }, 5000);
       }
     });
   }

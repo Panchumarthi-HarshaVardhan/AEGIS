@@ -15,8 +15,8 @@ import type {
 
 const electronAPI: ElectronAPI = {
   // --- Commands ---
-  sendCommand: (text: string): Promise<JarvisResponse> =>
-    ipcRenderer.invoke('jarvis:command', text),
+  sendCommand: (text: string, isVoiceInput?: boolean, attachmentPath?: string): Promise<JarvisResponse> =>
+    ipcRenderer.invoke('jarvis:command', text, isVoiceInput, attachmentPath),
 
   approveAction: (approvalId: string, approved: boolean): Promise<ActionResult> =>
     ipcRenderer.invoke('jarvis:approve', approvalId, approved),
@@ -36,6 +36,9 @@ const electronAPI: ElectronAPI = {
   // --- Voice ---
   transcribeAudio: (audioBuffer: ArrayBuffer): Promise<string> =>
     ipcRenderer.invoke('jarvis:transcribe', audioBuffer),
+
+  synthesizeSpeech: (text: string): Promise<string> =>
+    ipcRenderer.invoke('jarvis:synthesize-speech', text),
 
   // --- Security ---
   analyzeUrl: (url: string): Promise<PhishingAnalysis> =>
@@ -65,7 +68,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('jarvis:ocr-screen'),
 
   // --- Window Modes (V2) ---
-  setWindowMode: (mode: 'orb' | 'palette' | 'alert' | 'workspace' | 'onboarding'): Promise<void> =>
+  setWindowMode: (mode: 'orb' | 'palette' | 'alert' | 'workspace' | 'onboarding' | 'voice' | 'emergency'): Promise<void> =>
     ipcRenderer.invoke('jarvis:set-window-mode', mode),
 
   getPreference: (key: string): Promise<string | null> =>
@@ -109,7 +112,19 @@ const electronAPI: ElectronAPI = {
     const handler = (_e: Electron.IpcRendererEvent, reason: string, transcript: string) => callback(reason, transcript)
     ipcRenderer.on('jarvis:emergency-triggered', handler)
     return () => ipcRenderer.removeListener('jarvis:emergency-triggered', handler)
-  }
-}
+  },
 
+  onStartVoice: (callback: () => void): (() => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('jarvis:start-voice', handler)
+    return () => ipcRenderer.removeListener('jarvis:start-voice', handler)
+  },
+
+  // --- Microphone Permission ---
+  getMicStatus: (): Promise<string> =>
+    ipcRenderer.invoke('jarvis:mic-status'),
+
+  openMicSettings: (): Promise<void> =>
+    ipcRenderer.invoke('jarvis:open-mic-settings')
+}
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

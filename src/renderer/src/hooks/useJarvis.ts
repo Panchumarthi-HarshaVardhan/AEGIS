@@ -71,7 +71,7 @@ export interface SystemStatus {
 
 export interface UseJarvisReturn {
   messages: ConversationMessage[]
-  sendCommand: (text: string) => Promise<void>
+  sendCommand: (text: string, isVoiceInput?: boolean, attachmentPath?: string) => Promise<void>
   isProcessing: boolean
   approvalRequest: ApprovalRequest | null
   respondToApproval: (approved: boolean) => Promise<void>
@@ -130,22 +130,23 @@ export function useJarvis(): UseJarvisReturn {
   }, [])
 
   /** Send a user command to JARVIS and append the response */
-  const sendCommand = useCallback(async (text: string): Promise<void> => {
+  const sendCommand = useCallback(async (text: string, isVoiceInput = false, attachmentPath?: string): Promise<void> => {
     const trimmed = text.trim()
-    if (!trimmed || isProcessing) return
+    if (!trimmed && !attachmentPath) return
+    if (isProcessing) return
 
     // Add user message immediately
     const userMessage: ConversationMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: trimmed,
+      content: trimmed || (attachmentPath ? `[Attached File: ${attachmentPath.split(/[/\\]/).pop()}]` : ''),
       timestamp: Date.now(),
     }
     setMessages((prev) => [...prev, userMessage])
     setIsProcessing(true)
 
     try {
-      const response = await window.electronAPI.sendCommand(trimmed)
+      const response = await window.electronAPI.sendCommand(trimmed, isVoiceInput, attachmentPath)
 
       // Add JARVIS response
       const jarvisMessage: ConversationMessage = {
@@ -158,6 +159,26 @@ export function useJarvis(): UseJarvisReturn {
         action_result: response.action_result,
       }
       setMessages((prev) => [...prev, jarvisMessage])
+
+      // Synthesize and play speech response only if user triggered via voice
+      if (isVoiceInput) {
+        try {
+          const audioBase64 = await window.electronAPI.synthesizeSpeech(response.message)
+          if (audioBase64) {
+            const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`)
+            await new Promise<void>((resolve) => {
+              audio.onended = () => resolve()
+              audio.onerror = () => resolve() // resolve on error to avoid hanging
+              audio.play().catch((err) => {
+                console.warn('[useJarvis] Audio play failed:', err)
+                resolve()
+              })
+            })
+          }
+        } catch (speechErr) {
+          console.warn('[useJarvis] Speech synthesis playback failed:', speechErr)
+        }
+      }
 
       // If the response requires approval, set the pending approval
       if (response.requires_approval && response.approval_id) {

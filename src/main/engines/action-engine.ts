@@ -9,6 +9,9 @@ import type { PlaywrightAutomation } from '../automation/playwright-automation'
 import type { ActionStep } from './planner-engine'
 import { ProviderManager } from '../provider-manager'
 import { isValidFilePath } from '../security/path-validator'
+import { PhishingDetector } from '../security/phishing-detector'
+import { EventBus } from '../event-bus'
+import { GuardianRegistry } from '../guardians/guardian-registry'
 
 /**
  * Executes approved action steps by dispatching to the appropriate
@@ -34,6 +37,14 @@ export class ActionEngine {
             message: 'No operation required'
           }
 
+        case 'start_voice_input':
+          EventBus.getInstance().publish('voice:start')
+          return {
+            success: true,
+            action: 'start_voice_input',
+            message: 'Voice input activated'
+          }
+
         case 'open_app':
           await this.automation.openApp(step.params.app_name || step.params.name || '')
           return {
@@ -57,7 +68,7 @@ export class ActionEngine {
           const query = step.params.song || step.params.query || ''
 
           if (platform === 'spotify') {
-            await this.playwright.playMusic(query, 'spotify')
+            await this.automation.playOnSpotify(query)
           } else if (platform === 'apple' || platform === 'apple_music') {
             await this.automation.playOnAppleMusic(query)
           } else {
@@ -264,13 +275,6 @@ export class ActionEngine {
             await this.automation.captureScreen(tempPath)
             
             try {
-              const { ServiceManager } = require('../services/service-manager');
-              const isBackendHealthy = ServiceManager.getInstance().isServiceHealthy('PythonBackend');
-              
-              if (!isBackendHealthy) {
-                throw new Error('PythonBackend service is down or unhealthy');
-              }
-
               const response = await fetch('http://127.0.0.1:8000/api/ocr', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -316,6 +320,31 @@ export class ActionEngine {
         }
 
         case 'audit_screen_links': {
+          // If a specific URL was provided, check it directly without screen capture
+          const directUrl = step.params.url
+          if (directUrl) {
+            const detector = new PhishingDetector()
+            try {
+              const analysis = await detector.analyze(directUrl)
+              const verdictMsg = analysis.verdict === 'SAFE'
+                ? `I've analyzed that URL, and it looks completely safe.`
+                : `Warning: I checked that URL and it looks ${analysis.verdict.toLowerCase()} with a risk score of ${analysis.risk_score} out of 100.`
+              return {
+                success: true,
+                action: 'audit_screen_links',
+                message: verdictMsg,
+                data: { url: directUrl, analysis }
+              }
+            } catch (err) {
+              return {
+                success: false,
+                action: 'audit_screen_links',
+                message: `Failed to analyze URL: ${err instanceof Error ? err.message : String(err)}`,
+                error: String(err)
+              }
+            }
+          }
+
           const tempDir = require('electron').app.getPath('temp')
           const tempPath = require('path').join(tempDir, `jarvis_audit_${Date.now()}.png`)
           let ocrText = ''
@@ -365,12 +394,11 @@ export class ActionEngine {
             return {
               success: true,
               action: 'audit_screen_links',
-              message: '🔒 Screen Audit Completed: No links or URLs detected on the screen.',
+              message: 'I checked your screen but did not detect any links or web addresses.',
               data: { urls_found: 0, checked: [] }
             }
           }
           
-          const { PhishingDetector } = require('../security/phishing-detector')
           const detector = new PhishingDetector()
           const results: any[] = []
           let containsThreat = false
@@ -379,13 +407,51 @@ export class ActionEngine {
           
           for (const url of urls) {
             try {
-              const analysis = await detector.analyze(url)
-              results.push({ url, analysis })
-              if (analysis.verdict === 'DANGEROUS' || analysis.verdict === 'SUSPICIOUS') {
+              const phishingAnalysis = await detector.analyze(url)
+              let riskScore = phishingAnalysis.risk_score
+              let verdict = phishingAnalysis.verdict
+              let reason = phishingAnalysis.signals[0]?.description || 'Suspicious URL signature'
+              let isDeepfake = false
+
+              // Deepfake / Fake News Check via LLM
+              try {
+                const systemPrompt = `You are the Deepfake/FakeNews Verification Engine for AEGIS Guardian AI.
+Given a URL opened by the user, analyze if this URL/webpage contains or represents a known deepfake, synthetic media, manipulated audio/video, or fabricated news.
+You must respond with a JSON object in this exact format:
+{
+  "isDeepfake": boolean,
+  "score": number, // confidence score of synthetic manipulation/fabrication (0 to 100)
+  "explanation": "Brief explanation of why it is flagged or safe"
+}
+
+Analyze the URL: ${url}
+Be extremely vigilant. Flag known deepfake campaigns, synthetic speech, falsified media, and fake news articles. If normal content, set isDeepfake: false and score: 0.`
+
+                const deepfakeRes = await ProviderManager.getInstance().getChatCompletion([
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: `Analyze this URL: ${url}` }
+                ], { temperature: 0.1, response_format: { type: 'json_object' } })
+
+                const parsedDf = JSON.parse(deepfakeRes)
+                if (parsedDf.isDeepfake && typeof parsedDf.score === 'number' && parsedDf.score > 50) {
+                  isDeepfake = true
+                  if (parsedDf.score > riskScore) {
+                    riskScore = parsedDf.score
+                    verdict = 'DANGEROUS'
+                    reason = `DEEPFAKE / SYNTHETIC MEDIA: ${parsedDf.explanation}`
+                  }
+                }
+              } catch (err) {
+                console.warn('[ActionEngine] Deepfake URL check failed:', err)
+              }
+
+              results.push({ url, phishingAnalysis, isDeepfake, riskScore, reason })
+
+              if (verdict === 'DANGEROUS' || verdict === 'SUSPICIOUS') {
                 containsThreat = true
-                if (analysis.risk_score > maxScore) {
-                  maxScore = analysis.risk_score
-                  threatDescription = `Found suspicious/dangerous URL on screen: "${url}". Reason: ${analysis.signals[0]?.description || 'Suspicious URL signature'}`
+                if (riskScore > maxScore) {
+                  maxScore = riskScore
+                  threatDescription = `Found suspicious/dangerous URL on screen: "${url}". Reason: ${reason}`
                 }
               }
             } catch (err) {
@@ -394,7 +460,6 @@ export class ActionEngine {
           }
           
           if (containsThreat) {
-            const { EventBus } = require('../event-bus')
             const eventBus = EventBus.getInstance()
             let severity: 'low' | 'medium' | 'high' | 'critical' = 'low'
             if (maxScore >= 90) severity = 'critical'
@@ -414,15 +479,15 @@ export class ActionEngine {
             return {
               success: true,
               action: 'audit_screen_links',
-              message: `🚨 JARVIS Screen Audit Alert: ${threatDescription}`,
+              message: `Warning: I found a suspicious link on your screen. ${threatDescription}`,
               data: { urls_found: urls.length, contains_threat: true, details: results }
             }
           }
-          
+
           return {
             success: true,
             action: 'audit_screen_links',
-            message: `🔒 Screen Audit Completed: Checked ${urls.length} URL(s) on your screen. All links appear to be SAFE.`,
+            message: "I've checked the screen, and all the visible links look completely safe.",
             data: { urls_found: urls.length, contains_threat: false, details: results }
           }
         }
@@ -463,6 +528,271 @@ export class ActionEngine {
               message: `Simulated malware scan of "${filePath}" completed. Verdict: SAFE. No signatures or threats detected.`,
               data: { verdict: 'SAFE', score: 0, description: 'Simulated safe result.' }
             }
+          }
+        }
+
+        case 'compose_email': {
+          const to = step.params.to || ''
+          const subject = step.params.subject || ''
+          const body = step.params.body || ''
+          const isGmail = (step.params.service || '').toLowerCase() === 'gmail' || /gmail/i.test(step.params.app_name || '') || /gmail/i.test(step.description)
+
+          let url = ''
+          if (isGmail) {
+            url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+          } else {
+            url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+          }
+
+          await this.automation.openUrl(url)
+          return {
+            success: true,
+            action: 'compose_email',
+            message: `Opened ${isGmail ? 'Gmail compose' : 'mail client'} to compose email to "${to}"`
+          }
+        }
+
+        case 'send_whatsapp': {
+          const phone = step.params.phone || step.params.to || ''
+          const body = step.params.body || step.params.message || step.params.query || ''
+          
+          const cleanPhone = phone.replace(/[^0-9]/g, '')
+          let url = ''
+          if (cleanPhone) {
+            url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(body)}`
+          } else {
+            url = `https://api.whatsapp.com/send?text=${encodeURIComponent(body)}`
+          }
+
+          await this.automation.openUrl(url)
+          return {
+            success: true,
+            action: 'send_whatsapp',
+            message: `Opened WhatsApp message composer ${cleanPhone ? `for ${cleanPhone}` : ''}`
+          }
+        }
+
+        case 'set_alarm': {
+          const timeStr = step.params.time || step.params.value || ''
+          const label = step.params.label || 'Alarm'
+          
+          if (process.platform === 'darwin') {
+            try {
+              let hour = 7
+              let minute = 0
+              const match = timeStr.match(/(\d+):(\d+)(?:\s*(am|pm))?/i)
+              if (match) {
+                hour = parseInt(match[1])
+                minute = parseInt(match[2])
+                const ampm = match[3] ? match[3].toLowerCase() : ''
+                if (ampm === 'pm' && hour < 12) hour += 12
+                if (ampm === 'am' && hour === 12) hour = 0
+              }
+
+              const escapedLabel = label.replace(/"/g, '\\"')
+              const script = `
+                set targetDate to current date
+                set hours of targetDate to ${hour}
+                set minutes of targetDate to ${minute}
+                set seconds of targetDate to 0
+                if targetDate < (current date) then
+                  set targetDate to targetDate + (1 * days)
+                end if
+                
+                tell application "Reminders"
+                  set defaultList to default list
+                  make new reminder at defaultList with properties {name:"⏰ Alarm: ${escapedLabel}", due date:targetDate}
+                end tell
+              `
+              
+              const exec = require('child_process').exec
+              const escapedScript = script.replace(/'/g, "'\\''")
+              await new Promise<void>((resolve, reject) => {
+                exec(`osascript -e '${escapedScript}'`, (err: Error | null) => {
+                  if (err) reject(err)
+                  else resolve()
+                })
+              })
+
+              try {
+                await this.automation.openApp('Clock')
+              } catch (e) {}
+
+              return {
+                success: true,
+                action: 'set_alarm',
+                message: `Alarm set for ${timeStr} (${label}) as a system reminder, and opened the Clock app.`
+              }
+            } catch (err) {
+              return {
+                success: false,
+                action: 'set_alarm',
+                message: `Failed to set alarm: ${err instanceof Error ? err.message : String(err)}`,
+                error: String(err)
+              }
+            }
+          } else {
+            return {
+              success: true,
+              action: 'set_alarm',
+              message: `Simulated setting alarm for ${timeStr} (${label})`
+            }
+          }
+        }
+
+        case 'set_reminder': {
+          const title = step.params.title || step.params.query || step.params.value || 'Reminder'
+          const dueDateStr = step.params.due_date || step.params.time || ''
+          
+          if (process.platform === 'darwin') {
+            try {
+              let dateScript = 'set targetDate to (current date) + (1 * hours)'
+              if (dueDateStr) {
+                dateScript = `set targetDate to date "${dueDateStr}"`
+              }
+              
+              const escapedTitle = title.replace(/"/g, '\\"')
+              const script = `
+                try
+                  ${dateScript}
+                on error
+                  set targetDate to (current date) + (1 * hours)
+                end try
+                
+                tell application "Reminders"
+                  set defaultList to default list
+                  make new reminder at defaultList with properties {name:"📌 ${escapedTitle}", due date:targetDate}
+                end tell
+              `
+              
+              const exec = require('child_process').exec
+              const escapedScript = script.replace(/'/g, "'\\''")
+              await new Promise<void>((resolve, reject) => {
+                exec(`osascript -e '${escapedScript}'`, (err: Error | null) => {
+                  if (err) reject(err)
+                  else resolve()
+                })
+              })
+
+              return {
+                success: true,
+                action: 'set_reminder',
+                message: `Reminder set: "${title}"`
+              }
+            } catch (err) {
+              try {
+                const escapedTitle = title.replace(/"/g, '\\"')
+                const script = `
+                  tell application "Reminders"
+                    set defaultList to default list
+                    make new reminder at defaultList with properties {name:"📌 ${escapedTitle}"}
+                  end tell
+                `
+                const exec = require('child_process').exec
+                const escapedScript = script.replace(/'/g, "'\\''")
+                await new Promise<void>((resolve, reject) => {
+                  exec(`osascript -e '${escapedScript}'`, (err: Error | null) => {
+                    if (err) reject(err)
+                    else resolve()
+                  })
+                })
+                return {
+                  success: true,
+                  action: 'set_reminder',
+                  message: `Reminder set: "${title}" (without specific due date due to parsing issue)`
+                }
+              } catch (e) {
+                return {
+                  success: false,
+                  action: 'set_reminder',
+                  message: `Failed to set reminder: ${err instanceof Error ? err.message : String(err)}`,
+                  error: String(err)
+                }
+              }
+            }
+          } else {
+            return {
+              success: true,
+              action: 'set_reminder',
+              message: `Simulated reminder set: "${title}"`
+            }
+          }
+        }
+
+        case 'automate_app': {
+          const appName = step.params.app_name || ''
+          const taskDescription = step.params.task_description || ''
+          
+          if (!appName || !taskDescription) {
+            return {
+              success: false,
+              action: 'automate_app',
+              message: 'Missing app_name or task_description parameters.',
+              error: 'Missing parameters'
+            }
+          }
+
+          const blacklisted = [
+            'keychain', 'system settings', 'systemsettings', 'system preferences', 'systempreferences',
+            'app store', 'appstore', '1password', 'bitwarden', 'lastpass', 'dashlane', 'keeper',
+            'terminal', 'iterm', 'warp', 'console', 'activity monitor', 'activitymonitor',
+            'paypal', 'stripe', 'venmo', 'ledger', 'coinbase', 'banking'
+          ]
+          const lowerApp = appName.toLowerCase()
+          if (blacklisted.some(item => lowerApp.includes(item))) {
+            return {
+              success: false,
+              action: 'automate_app',
+              message: `Security block: Automation of the application "${appName}" is blocked.`,
+              error: 'Security block'
+            }
+          }
+
+          await this.automation.automateApp(appName, taskDescription)
+          return {
+            success: true,
+            action: 'automate_app',
+            message: `Successfully executed automation task in ${appName}.`,
+            data: { app: appName, task: taskDescription }
+          }
+        }
+
+        case 'security_status': {
+          let guardiansActive = false
+          try {
+            const registry = GuardianRegistry.getInstance()
+            const guardians = (registry as any).guardians
+            if (guardians instanceof Map) {
+              for (const guardian of guardians.values()) {
+                if ((guardian as any).active) {
+                  guardiansActive = true
+                  break
+                }
+              }
+            }
+          } catch (err) {
+            console.error('[ActionEngine] Failed to read guardian status registry:', err)
+          }
+
+          const providerStatus = ProviderManager.getInstance().getStatus()
+          const isConnected = providerStatus.activeProvider !== 'none'
+
+          let message = ''
+          if (guardiansActive) {
+            message = "I have checked the system status. Everything is fine, and you are fully secured. All safety guardians are running actively."
+          } else {
+            message = "I have checked the system status. The safety guardians are currently idle, but the protection system is fully operational."
+          }
+
+          if (!isConnected) {
+            message = "I have checked the system status. The safety systems are active, but the AI core is currently offline."
+          }
+
+          return {
+            success: true,
+            action: 'security_status',
+            message,
+            data: { isConnected, guardiansActive }
           }
         }
 

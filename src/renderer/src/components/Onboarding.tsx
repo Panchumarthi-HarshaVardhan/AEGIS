@@ -1,148 +1,173 @@
 // ============================================================
-// AEGIS UI — Onboarding & Permissions Setup
-// Apple-style first-run setup wizard
+// AEGIS — First-Run Onboarding Wizard
+// Glass card wizard: terms acceptance, permission toggles, get started
 // ============================================================
 
-import React, { useState } from 'react'
-import * as Icons from './Icons'
+import { useState } from 'react'
 
 interface OnboardingProps {
   onComplete: () => void
 }
 
-const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
+interface Permission {
+  key: string
+  name: string
+  desc: string
+  icon: React.ReactNode
+  default: boolean
+}
+
+const PERMISSIONS: Permission[] = [
+  {
+    key: 'screen_monitoring',
+    name: 'Screen Monitoring',
+    desc: 'Analyze on-screen content to detect phishing and social engineering in real time.',
+    default: true,
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
+      </svg>
+    )
+  },
+  {
+    key: 'clipboard_monitoring',
+    name: 'Clipboard Monitoring',
+    desc: 'Scan clipboard contents to warn about malicious links and exposed credentials.',
+    default: true,
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+        <rect x="8" y="2" width="8" height="4" rx="1" />
+      </svg>
+    )
+  },
+  {
+    key: 'network_protection',
+    name: 'Network Protection',
+    desc: 'Monitor network traffic to block connections to known malicious endpoints.',
+    default: true,
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
+    )
+  }
+]
+
+function Onboarding({ onComplete }: OnboardingProps): React.JSX.Element {
   const [termsAccepted, setTermsAccepted] = useState(false)
-  const [voiceCallsEnabled, setVoiceCallsEnabled] = useState(true)
-  const [screenOcrEnabled, setScreenOcrEnabled] = useState(true)
-  const [clipboardBrowserEnabled, setClipboardBrowserEnabled] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+  const [permissions, setPermissions] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(PERMISSIONS.map((p) => [p.key, p.default]))
+  )
 
-  const handleConfirm = async (): Promise<void> => {
-    if (!termsAccepted || isSaving) return
-    setIsSaving(true)
+  const togglePermission = (key: string): void => {
+    setPermissions((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
+  const handleGetStarted = async (): Promise<void> => {
     try {
-      // Save preferences persistently in SQLite via IPC
       await window.electronAPI.setPreference('onboarding_completed', 'true')
-      await window.electronAPI.setPreference('permission_voice_calls', voiceCallsEnabled ? 'true' : 'false')
-      await window.electronAPI.setPreference('permission_screen_ocr', screenOcrEnabled ? 'true' : 'false')
-      await window.electronAPI.setPreference('permission_clipboard_browser', clipboardBrowserEnabled ? 'true' : 'false')
-      
-      onComplete()
+      // Persist individual permission choices
+      for (const [key, enabled] of Object.entries(permissions)) {
+        await window.electronAPI.setPreference(key, String(enabled))
+      }
     } catch (err) {
-      console.error('[Onboarding] Failed to save setup configurations:', err)
-    } finally {
-      setIsSaving(false)
+      console.error('[Onboarding] Failed to save preferences:', err)
     }
+    onComplete()
   }
 
   return (
     <div className="onboarding-wrapper">
-      <div className="onboarding-card animate-scale-in">
-        {/* Header Section */}
+      <div className="onboarding-card">
+        {/* ── Header ─────────────────────────────────────────── */}
         <div className="onboarding-header">
-          <Icons.Shield size={32} className="onboarding-logo" />
+          <div className="onboarding-logo">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <path
+                d="M20 3L6 10v10c0 9.05 5.97 17.52 14 19.5 8.03-1.98 14-10.45 14-19.5V10L20 3z"
+                fill="currentColor"
+                opacity="0.15"
+              />
+              <path
+                d="M20 3L6 10v10c0 9.05 5.97 17.52 14 19.5 8.03-1.98 14-10.45 14-19.5V10L20 3z"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+                fill="none"
+              />
+              <path
+                d="M20 12v8M20 24h.01"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
           <h2>Welcome to AEGIS</h2>
-          <p className="onboarding-subtitle">Privacy-First AI Operating Companion & Security Copilot</p>
+          <span className="onboarding-subtitle">
+            Your AI-powered security companion for real-time threat detection and privacy protection.
+          </span>
         </div>
 
-        {/* Content Area */}
+        {/* ── Body ───────────────────────────────────────────── */}
         <div className="onboarding-body">
-          
-          {/* Section 1: Terms and Conditions */}
+          {/* Terms & Privacy */}
           <div className="onboarding-section">
-            <label className="onboarding-section-title">Terms & Conditions</label>
+            <span className="onboarding-section-title">Terms &amp; Privacy</span>
             <div className="terms-scroll-box">
-              <p>
-                AEGIS runs as a localized system companion. By enabling protection, you authorize AEGIS to monitor key system events locally, including file downloads, clipboard modifications, browser navigation logs, and active application focus swaps. 
-              </p>
-              <p style={{ marginTop: '8px' }}>
-                All sensitive information scans, developer API credential scanning, and screen OCR captures occur strictly locally in your device RAM and SQLite logs. We do not transmit passwords, credentials, or raw audio call logs to remote servers. Natural language processing is routed securely through local or chosen cloud LLM APIs.
-              </p>
+              AEGIS processes data locally on your device. Screen captures, clipboard content, and
+              network metadata are analyzed in real time and never transmitted to external servers.
+              All threat detection models run on-device. You may revoke any permission at any time
+              from Settings. By continuing, you acknowledge that AEGIS will monitor the enabled
+              data sources below solely for security analysis and that you have read and agree to
+              the privacy policy.
             </div>
-            <label className="onboarding-checkbox-label" htmlFor="accept-terms">
+            <label className="onboarding-checkbox-label">
               <input
-                id="accept-terms"
                 type="checkbox"
                 checked={termsAccepted}
                 onChange={(e) => setTermsAccepted(e.target.checked)}
               />
-              <span>I accept the AEGIS Terms and Conditions</span>
+              I agree to the terms and privacy policy
             </label>
           </div>
 
-          {/* Section 2: Permissions Configuration */}
-          <div className="onboarding-section" style={{ marginTop: '12px' }}>
-            <label className="onboarding-section-title">Configure System Security Permissions</label>
-            
+          {/* Permissions */}
+          <div className="onboarding-section">
+            <span className="onboarding-section-title">Permissions</span>
             <div className="permission-items">
-              
-              {/* Permission Item 1 */}
-              <div className="permission-item">
-                <div className="permission-info">
-                  <div className="permission-name">Voice & Video Call Auditing</div>
-                  <div className="permission-desc">Allows Call Guardian to process call transcripts locally to flag potential bank fraud and OTP scams.</div>
+              {PERMISSIONS.map((perm) => (
+                <div className="permission-item" key={perm.key}>
+                  <div className="permission-info">
+                    <span className="permission-name">{perm.name}</span>
+                    <span className="permission-desc">{perm.desc}</span>
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={permissions[perm.key]}
+                      onChange={() => togglePermission(perm.key)}
+                    />
+                    <span className="slider round" />
+                  </label>
                 </div>
-                <label className="switch" htmlFor="toggle-voice">
-                  <input
-                    id="toggle-voice"
-                    type="checkbox"
-                    checked={voiceCallsEnabled}
-                    onChange={(e) => setVoiceCallsEnabled(e.target.checked)}
-                  />
-                  <span className="slider round"></span>
-                </label>
-              </div>
-
-              {/* Permission Item 2 */}
-              <div className="permission-item">
-                <div className="permission-info">
-                  <div className="permission-name">Screen Capture & OCR</div>
-                  <div className="permission-desc">Allows capturing the desktop area to perform local text OCR extraction when requested.</div>
-                </div>
-                <label className="switch" htmlFor="toggle-screen">
-                  <input
-                    id="toggle-screen"
-                    type="checkbox"
-                    checked={screenOcrEnabled}
-                    onChange={(e) => setScreenOcrEnabled(e.target.checked)}
-                  />
-                  <span className="slider round"></span>
-                </label>
-              </div>
-
-              {/* Permission Item 3 */}
-              <div className="permission-item">
-                <div className="permission-info">
-                  <div className="permission-name">Clipboard & Browser Monitoring</div>
-                  <div className="permission-desc">Monitors clipboard additions for credential leaks and audits browser navigations for phishing.</div>
-                </div>
-                <label className="switch" htmlFor="toggle-clipboard">
-                  <input
-                    id="toggle-clipboard"
-                    type="checkbox"
-                    checked={clipboardBrowserEnabled}
-                    onChange={(e) => setClipboardBrowserEnabled(e.target.checked)}
-                  />
-                  <span className="slider round"></span>
-                </label>
-              </div>
-
+              ))}
             </div>
           </div>
-
         </div>
 
-        {/* Footer Actions */}
+        {/* ── Footer ─────────────────────────────────────────── */}
         <div className="onboarding-footer">
           <button
-            type="button"
             className="btn btn-primary"
-            style={{ width: '100%', padding: '10px' }}
-            disabled={!termsAccepted || isSaving}
-            onClick={handleConfirm}
+            disabled={!termsAccepted}
+            onClick={handleGetStarted}
+            style={{ width: '100%' }}
           >
-            {isSaving ? 'Configuring System...' : 'Confirm & Launch AEGIS'}
+            Get Started
           </button>
         </div>
       </div>

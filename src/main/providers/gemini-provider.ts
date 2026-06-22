@@ -28,9 +28,30 @@ export class GeminiProvider implements AIProvider {
         if (msg.role === 'system') {
           systemInstruction = { parts: [{ text: msg.content }] };
         } else {
+          const parts: any[] = [];
+          if (Array.isArray(msg.content)) {
+            for (const part of msg.content) {
+              if (part.type === 'text') {
+                parts.push({ text: part.text });
+              } else if (part.type === 'image_url') {
+                const url = part.image_url.url;
+                const match = url.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  parts.push({
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2]
+                    }
+                  });
+                }
+              }
+            }
+          } else {
+            parts.push({ text: msg.content });
+          }
           contents.push({
             role: msg.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: msg.content }]
+            parts
           });
         }
       }

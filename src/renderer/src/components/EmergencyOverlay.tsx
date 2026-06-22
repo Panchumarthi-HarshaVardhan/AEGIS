@@ -1,10 +1,4 @@
-// ============================================================
-// AEGIS UI — Emergency Overlay
-// Secure workspace overlay shown during blackmail/extortion threats
-// ============================================================
-
-import React, { useState } from 'react'
-import * as Icons from './Icons'
+import { useState, useEffect } from 'react'
 
 interface EmergencyOverlayProps {
   reason: string
@@ -12,137 +6,148 @@ interface EmergencyOverlayProps {
   onClose: () => void
 }
 
-const EmergencyOverlay: React.FC<EmergencyOverlayProps> = ({
-  reason,
-  transcript,
-  onClose
-}) => {
-  const [recording, setRecording] = useState(false)
-  const [contactsNotified, setContactsNotified] = useState(false)
+const CHECKLIST_ITEMS = [
+  'Scanning active connections...',
+  'Checking running processes...',
+  'Securing sensitive data...',
+  'Generating incident report...'
+]
 
-  const handleNotifyContacts = (): void => {
-    setContactsNotified(true)
-    alert('Emergency alert sent to configured trusted contacts.')
-  }
+function EmergencyOverlay({ reason, transcript, onClose }: EmergencyOverlayProps): React.JSX.Element {
+  const [completedCount, setCompletedCount] = useState(0)
+
+  useEffect(() => {
+    if (completedCount >= CHECKLIST_ITEMS.length) return
+
+    const timer = setTimeout(() => {
+      setCompletedCount((prev) => prev + 1)
+    }, 2000)
+
+    return (): void => clearTimeout(timer)
+  }, [completedCount])
 
   return (
-    <div 
-      className="emergency-overlay-container"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="emergency-title"
-      aria-describedby="emergency-desc"
-    >
-      <div className="emergency-overlay animate-scale-in">
+    <div className="emergency-overlay-container">
+      <div className="emergency-overlay">
         {/* Header */}
         <div className="emergency-header">
-          <Icons.AlertTriangle size={24} className="emergency-icon" />
-          <div>
-            <div className="emergency-title" id="emergency-title">AEGIS Emergency Shield</div>
-            <div className="text-muted" style={{ fontSize: '12px' }}>
-              Active Protection Mode enabled.
-            </div>
+          <div className="emergency-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 2L1 21h22L12 2z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="12" cy="17" r="1" fill="currentColor" />
+            </svg>
           </div>
+          <span className="emergency-title">🚨 EMERGENCY DETECTED</span>
         </div>
 
-        {/* Threat Summary */}
-        <div 
-          className="glass-panel" 
-          id="emergency-desc"
-          style={{ 
-            padding: '12px', 
-            background: 'rgba(255, 69, 58, 0.08)', 
-            borderColor: 'rgba(255, 69, 58, 0.15)',
-            fontSize: '13px' 
-          }}
-        >
-          <strong>Threat Detected:</strong> {reason}
-          <div className="text-muted" style={{ fontStyle: 'italic', marginTop: '6px' }}>
-            "{transcript.length > 150 ? `${transcript.substring(0, 150)}...` : transcript}"
-          </div>
-        </div>
+        {/* Reason */}
+        <p style={{ fontSize: 14, color: 'var(--aegis-text-secondary)', margin: 0, lineHeight: 1.5 }}>
+          {reason}
+        </p>
 
-        {/* Safety Checklist */}
-        <div className="emergency-checklist">
-          <strong>Recommended Security Steps:</strong>
-          <label className="emergency-check-item">
-            <span className="emergency-check-icon active">
-              <Icons.CheckCircle size={16} />
-            </span>
-            <span>Secure passwords & revoke session tokens</span>
-          </label>
-          <label className="emergency-check-item">
-            <span className="emergency-check-icon active">
-              <Icons.CheckCircle size={16} />
-            </span>
-            <span>Enable screen recording & log call audio</span>
-          </label>
-          <label className="emergency-check-item">
-            <span className="emergency-check-icon">
-              <Icons.CheckCircle size={16} />
-            </span>
-            <span>Contact local law enforcement (DO NOT delete evidence)</span>
-          </label>
-        </div>
-
-        {/* Action Panel */}
-        <div className="emergency-actions-grid">
-          <button
-            type="button"
-            className={`btn ${recording ? 'btn-danger' : 'btn-glass'}`}
-            onClick={() => setRecording(!recording)}
-          >
-            {recording ? (
-              <>
-                <span className="sidebar-status-dot" style={{ background: 'var(--aegis-red)', boxShadow: '0 0 6px var(--aegis-red-glow)' }} />
-                Recording Screen...
-              </>
-            ) : (
-              <>
-                <Icons.Eye size={16} />
-                Start Screen Record
-              </>
-            )}
-          </button>
-          
-          <button
-            type="button"
-            className="btn btn-danger"
-            onClick={handleNotifyContacts}
-            disabled={contactsNotified}
+        {/* Transcript */}
+        {transcript && (
+          <div
             style={{
-              background: contactsNotified ? 'var(--aegis-green)' : 'var(--aegis-red)',
-              boxShadow: contactsNotified ? '0 2px 6px var(--aegis-green-glow)' : '0 2px 6px var(--aegis-red-glow)'
+              fontSize: 12,
+              color: 'var(--aegis-text-tertiary)',
+              background: 'rgba(255, 255, 255, 0.04)',
+              borderRadius: 8,
+              padding: '10px 12px',
+              fontStyle: 'italic',
+              lineHeight: 1.5
             }}
           >
-            {contactsNotified ? (
-              <>
-                <Icons.CheckCircle size={16} />
-                Contacts Notified
-              </>
-            ) : (
-              <>
-                <Icons.ExternalLink size={16} />
-                Notify Trusted Contacts
-              </>
-            )}
+            &ldquo;{transcript}&rdquo;
+          </div>
+        )}
+
+        {/* Checklist */}
+        <div className="emergency-checklist">
+          {CHECKLIST_ITEMS.map((item, index) => {
+            const isDone = index < completedCount
+            return (
+              <div className="emergency-check-item" key={index}>
+                <div className={`emergency-check-icon${isDone ? ' active' : ''}`}>
+                  {isDone ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M20 6L9 17l-5-5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                  )}
+                </div>
+                <span>{item}</span>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="emergency-actions-grid">
+          <button className="btn btn-danger">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ marginRight: 6, verticalAlign: -2 }}
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Lock System
+          </button>
+          <button className="btn btn-danger">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ marginRight: 6, verticalAlign: -2 }}
+            >
+              <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Kill Connections
+          </button>
+          <button className="btn btn-danger">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              style={{ marginRight: 6, verticalAlign: -2 }}
+            >
+              <path
+                d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Call Emergency
+          </button>
+          <button className="btn btn-glass" onClick={onClose}>
+            Dismiss
           </button>
         </div>
-
-        {/* Location Log Status */}
-        <div className="text-muted" style={{ fontSize: '11px', textAlign: 'center', marginTop: '6px' }}>
-          Location logs active: lat/lon (mocked) and system timeline recorded locally in RAM.
-        </div>
-
-        {/* Close and exit back to Orb */}
-        <button
-          type="button"
-          className="btn btn-glass"
-          onClick={onClose}
-          style={{ width: '100%', marginTop: '8px' }}
-        >
-          Exit Emergency Mode
-        </button>
       </div>
     </div>
   )

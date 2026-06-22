@@ -7,6 +7,7 @@ import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolveAppName } from './app-aliases'
 import { AutomationProvider } from './automation-provider'
+import { ProviderManager } from '../provider-manager'
 
 const execAsync = promisify(exec)
 
@@ -357,5 +358,84 @@ export class MacOSAutomation implements AutomationProvider {
     if (/^https?:\/\//i.test(url)) return url
     if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return url
     return `https://${url}`
+  }
+
+  /**
+   * Performs an automation task in a target app using AppleScript.
+   *
+   * @param appName - The target app name (e.g. "Notes")
+   * @param taskDescription - Description of the GUI actions to perform
+   * @throws {Error} if the app is blacklisted or compilation fails
+   */
+  async automateApp(appName: string, taskDescription: string): Promise<void> {
+    const blacklisted = [
+      'keychain', 'system settings', 'systemsettings', 'system preferences', 'systempreferences',
+      'app store', 'appstore', '1password', 'bitwarden', 'lastpass', 'dashlane', 'keeper',
+      'terminal', 'iterm', 'warp', 'console', 'activity monitor', 'activitymonitor',
+      'paypal', 'stripe', 'venmo', 'ledger', 'coinbase', 'banking'
+    ]
+    const lowerApp = appName.toLowerCase()
+    if (blacklisted.some(item => lowerApp.includes(item))) {
+      throw new Error(`Automation block: Target app "${appName}" is blacklisted to protect security/payments.`)
+    }
+
+    // Dynamic AppleScript Generation via Active LLM Provider
+    const systemPrompt = `You are the GUI Automation Engine for AEGIS Guardian AI on macOS.
+Your job is to generate a safe AppleScript that accomplishes the user's requested task in a specified application.
+You must ONLY use GUI scripting (System Events) or direct application commands.
+
+Allowed applications: any app NOT involved with payments, banking, security keys, or credential management.
+Specifically, DO NOT automate: Keychain Access, System Settings (for security settings), App Store, 1Password, Bitwarden, Terminal (for sensitive commands), banking apps/websites.
+
+The AppleScript must:
+1. Activate the target application.
+2. Wait a moment (delay 0.5 or 1).
+3. Perform the actions (e.g., keystroke, click menu item, type text).
+4. Be safe and not cause damage.
+
+Examples:
+- App: "Notes", Task: "type Hello World"
+  Script:
+  tell application "Notes" to activate
+  delay 0.5
+  tell application "System Events"
+    keystroke "Hello World"
+  end tell
+
+- App: "TextEdit", Task: "create a new document and write draft"
+  Script:
+  tell application "TextEdit" to activate
+  delay 0.5
+  tell application "System Events"
+    keystroke "n" using {command down}
+    delay 0.5
+    keystroke "draft"
+  end tell
+
+Output ONLY the raw AppleScript code. Do NOT wrap it in markdown code blocks or add any comments/explanations. Just output the script code directly.`
+
+    const prompt = `App: "${appName}"\nTask: "${taskDescription}"`
+
+    let scriptText = ''
+    try {
+      const response = await ProviderManager.getInstance().getChatCompletion([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ], { temperature: 0.1 })
+      
+      // Clean up markdown code blocks if the LLM wrapped it anyway
+      scriptText = response.replace(/```applescript/gi, '')
+                           .replace(/```/g, '')
+                           .trim()
+    } catch (err) {
+      throw new Error(`Failed to generate automation script: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
+    if (!scriptText) {
+      throw new Error('LLM generated an empty AppleScript automation script.')
+    }
+
+    console.log(`[MacOSAutomation] Executing AppleScript for ${appName}:\n${scriptText}`)
+    await this.runAppleScript(scriptText)
   }
 }

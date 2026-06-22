@@ -39,10 +39,20 @@ You MUST respond with a JSON object containing these fields:
   - "song": song or music query
   - "platform": music/video platform (spotify, youtube, apple_music)
   - "file_path": file system path
-  - "action": specific sub-action (e.g., "delete", "copy", "download", "set_volume", "brightness", "ocr_screen", "audit_screen_links", "scan_for_malware")
+  - "action": specific sub-action (e.g., "delete", "copy", "download", "set_volume", "brightness", "ocr_screen", "audit_screen_links", "scan_for_malware", "compose_email", "send_whatsapp", "set_alarm", "set_reminder", "automate_app", "security_status")
+  - "to": recipient email address or recipient name
+  - "subject": email subject
+  - "body": content/message body of email or WhatsApp message
+  - "phone": phone number for WhatsApp message
+  - "time": time for alarm (e.g., "07:00", "7:00 AM")
+  - "label": alarm label or name
+  - "title": reminder title
+  - "due_date": reminder date or time
+  - "service": email service to use (e.g., "gmail")
+  - "task_description": description of a task/action to perform in an app (e.g. "type Hello World", "press command+N and write draft")
 - "risk_level": integer 0-3 based on action risk:
-  - 0: safe actions (open apps, search, play music, screen ocr)
-  - 1: moderate actions (file downloads, installs, malware scans)
+  - 0: safe actions (open apps, search, play music, screen ocr, alarms, reminders, conversation)
+  - 1: moderate actions (file downloads, installs, malware scans, composing email, composing whatsapp)
   - 2: sensitive actions (sending data, uploads, emails)
   - 3: critical actions (banking, payments, passwords)
 - "confidence": float 0.0-1.0 indicating classification confidence
@@ -56,6 +66,28 @@ Rules for Special Queries:
    "intent": "system_control", "entities": { "action": "audit_screen_links" }, "risk_level": 0
 3. If the user asks to scan a file, app, download, or general query for malware or check its safety, classify as:
    "intent": "system_control", "entities": { "action": "scan_for_malware", "file_path": (extracted file path or query) }, "risk_level": 1
+4. If the user asks to check a URL for safety, security, phishing, or threats (e.g., "Check this URL", "Is this safe?"), classify as:
+   "intent": "system_control", "entities": { "action": "audit_screen_links", "url": (the URL) }, "risk_level": 0
+   Do NOT classify URL safety checks as "open_url" — they are security analysis actions.
+5. If the user provides a URL after being asked to provide one (follow-up context), check previous conversation history. If the previous assistant message asked for a URL to check for safety/threats, classify the URL as a safety check (intent: "system_control", action: "audit_screen_links"), NOT as "open_url".
+6. If the user asks to compose, write, draft, or open an email/Gmail/compose window, classify as:
+   "intent": "system_control", "entities": { "action": "compose_email", "to": (recipient if present), "subject": (subject if present), "body": (email content/body if present), "service": (gmail/mail if specified) }, "risk_level": 1
+7. If the user asks to send a WhatsApp message, write a WhatsApp message, or open WhatsApp with a message, classify as:
+   "intent": "system_control", "entities": { "action": "send_whatsapp", "phone": (phone number if present), "body": (message content/body if present) }, "risk_level": 1
+8. If the user asks to set, edit, create, or delete an alarm, classify as:
+   "intent": "system_control", "entities": { "action": "set_alarm", "time": (time of alarm, e.g. "07:00"), "label": (label if present) }, "risk_level": 0
+9. If the user asks to set, create, edit, or delete a reminder, classify as:
+   "intent": "system_control", "entities": { "action": "set_reminder", "title": (title of reminder), "due_date": (due date/time if present) }, "risk_level": 0
+10. If the user asks to type, write, edit, click, save, or perform any task in a specific application (e.g. Notes, Pages, TextEdit, Safari, Slack, Spotify, Word, Xcode) that is NOT email or WhatsApp, classify as:
+    "intent": "system_control", "entities": { "action": "automate_app", "app_name": (name of the target application), "task_description": (detailed description of what to perform in the app) }, "risk_level": 1
+11. If the user asks to check the security status, system status, or see if the system is protected, classify as:
+    "intent": "system_control", "entities": { "action": "security_status" }, "risk_level": 0
+
+Rules for Conversational Queries:
+- If the user asks general questions like "What can you do?", "How can you protect me?", "Tell me about yourself", "How does X work?", or any informational/chat query that does NOT require a desktop automation action, classify as:
+  "intent": "unknown", "entities": { "query": (the user's question) }, "risk_level": 0
+  Provide a helpful natural_response.
+- Do NOT invent action types like "explain_capabilities", "help", "chat", or any other type not in the allowed list.
 
 Be precise. If unsure, use "unknown" intent with lower confidence.
 Always extract as many relevant entities as possible from the message.

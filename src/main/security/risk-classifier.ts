@@ -113,6 +113,15 @@ export class RiskClassifier {
    * @returns Risk classification with level, approval requirement, and reason
    */
   classify(intent: ParsedIntent): RiskClassification {
+    const action = (intent.entities.action ?? '').toLowerCase()
+    if (intent.intent === 'system_control' && (action === 'ocr_screen' || action === 'audit_screen_links')) {
+      return {
+        level: 0,
+        requires_approval: false,
+        reason: `System control "${action}" is a safe security check`
+      }
+    }
+
     // Always check for Level 3 (critical) keywords first — highest priority
     const criticalCheck = this.checkCriticalKeywords(intent)
     if (criticalCheck) return criticalCheck
@@ -283,9 +292,9 @@ export class RiskClassifier {
     }
 
     return {
-      level: 1,
-      requires_approval: true,
-      reason: `URL domain is not in the safe list — confirming with user`
+      level: 0,
+      requires_approval: false,
+      reason: `Opening URL is generally safe`
     }
   }
 
@@ -357,6 +366,30 @@ export class RiskClassifier {
   private classifySystemControl(intent: ParsedIntent): RiskClassification {
     const action = (intent.entities.action ?? '').toLowerCase()
 
+    if (action === 'automate_app') {
+      const appName = (intent.entities.app_name ?? '').toLowerCase()
+      const blacklisted = [
+        'keychain', 'system settings', 'systemsettings', 'system preferences', 'systempreferences',
+        'app store', 'appstore', '1password', 'bitwarden', 'lastpass', 'dashlane', 'keeper',
+        'terminal', 'iterm', 'warp', 'console', 'activity monitor', 'activitymonitor',
+        'paypal', 'stripe', 'venmo', 'ledger', 'coinbase', 'banking'
+      ]
+
+      if (blacklisted.some(item => appName.includes(item))) {
+        return {
+          level: 3,
+          requires_approval: true,
+          reason: `Critical block: Automation of sensitive app "${intent.entities.app_name}" is prohibited to protect security and payments.`
+        }
+      }
+
+      return {
+        level: 0,
+        requires_approval: false,
+        reason: `Requesting GUI automation in the application "${intent.entities.app_name}".`
+      }
+    }
+
     // Safe system controls
     const safeControls = new Set([
       'set_volume',
@@ -364,7 +397,13 @@ export class RiskClassifier {
       'dark_mode',
       'light_mode',
       'mute',
-      'unmute'
+      'unmute',
+      'ocr_screen',
+      'audit_screen_links',
+      'scan_for_malware',
+      'set_alarm',
+      'set_reminder',
+      'security_status'
     ])
 
     if (safeControls.has(action)) {

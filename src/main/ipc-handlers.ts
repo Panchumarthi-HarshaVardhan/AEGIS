@@ -50,6 +50,7 @@ interface EngineContext {
 }
 
 let emergencyListener: ((reason: string, transcript: string) => void) | null = null
+let voiceStartListener: (() => void) | null = null
 const pendingPermissionRequests = new Map<string, (state: PermissionState) => void>()
 
 export function registerIpcHandlers(ctx: EngineContext): void {
@@ -73,7 +74,9 @@ export function registerIpcHandlers(ctx: EngineContext): void {
     'jarvis:get-permissions',
     'jarvis:set-permission',
     'jarvis:request-permission',
-    'jarvis:respond-permission'
+    'jarvis:respond-permission',
+    'jarvis:mic-status',
+    'jarvis:open-mic-settings'
   ]
   for (const channel of channels) {
     ipcMain.removeHandler(channel)
@@ -125,16 +128,31 @@ export function registerIpcHandlers(ctx: EngineContext): void {
     { name: 'IPCHandlers:Emergency' }
   )
 
+  // Manage voice:start listener setup
+  if (voiceStartListener) {
+    EventBus.getInstance().unsubscribe('voice:start', voiceStartListener)
+  }
+
+  voiceStartListener = () => {
+    ctx.mainWindow?.webContents.send('jarvis:start-voice')
+  }
+
+  EventBus.getInstance().subscribe(
+    'voice:start',
+    voiceStartListener,
+    { name: 'IPCHandlers:VoiceStart' }
+  )
+
   // -------------------------------------------------------
   // MAIN COMMAND HANDLER — V3 pipeline orchestrator
   // -------------------------------------------------------
-  ipcMain.handle('jarvis:command', async (_event, text: string): Promise<JarvisResponse> => {
+  ipcMain.handle('jarvis:command', async (_event, text: string, isVoiceInput?: boolean, attachmentPath?: string): Promise<JarvisResponse> => {
     if (typeof text !== 'string') {
       return { message: 'Invalid command payload type.' }
     }
     return aiEngine.processCommand(text, (request: ApprovalRequest) => {
       ctx.mainWindow?.webContents.send('jarvis:approval-required', request)
-    })
+    }, isVoiceInput, attachmentPath)
   })
 
   // -------------------------------------------------------
@@ -201,6 +219,61 @@ export function registerIpcHandlers(ctx: EngineContext): void {
       const errMsg = error instanceof Error ? error.message : String(error)
       return `Voice transcription error: ${errMsg}`
     }
+  })
+
+  // -------------------------------------------------------
+  // VOICE SYNTHESIS (TTS)
+  // -------------------------------------------------------
+  ipcMain.handle('jarvis:synthesize-speech', async (_event, text: string): Promise<string> => {
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      return ''
+    }
+
+    const apiKey = process.env.ELEVEN_LABS_API_KEY || process.env.ELEVENLABS_API_KEY || ''
+    const voiceId = process.env.ELEVEN_LABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID || ''
+
+    if (apiKey && voiceId) {
+      try {
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': apiKey,
+            'accept': 'audio/mpeg'
+          },
+          body: JSON.stringify({
+            text,
+            model_id: 'eleven_monolingual_v1',
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.75
+            }
+          })
+        })
+
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer()
+          return Buffer.from(arrayBuffer).toString('base64')
+        } else {
+          console.error(`[JARVIS] ElevenLabs TTS HTTP error: ${response.status}`)
+        }
+      } catch (err) {
+        console.error('[JARVIS] ElevenLabs TTS connection error:', err)
+      }
+    }
+
+    // Fallback: use native macOS "say" command if running on macOS
+    if (process.platform === 'darwin') {
+      try {
+        const exec = require('child_process').exec
+        // Clean text for safe shell execution
+        const sanitizedText = text.replace(/['"`;$()&|]/g, '')
+        exec(`say "${sanitizedText}"`)
+      } catch (e) {
+        console.error('[JARVIS] macOS native speech fallback failed:', e)
+      }
+    }
+    return ''
   })
 
   // -------------------------------------------------------
@@ -280,9 +353,12 @@ export function registerIpcHandlers(ctx: EngineContext): void {
     try {
       const ext = path.extname(filePath).toLowerCase()
       const isAudio = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'].includes(ext)
+      const isImage = ['.png', '.jpg', '.jpeg', '.webp', '.bmp'].includes(ext)
       const endpoint = isAudio
         ? 'http://127.0.0.1:8000/api/deepfake/audio'
-        : 'http://127.0.0.1:8000/api/deepfake/video'
+        : isImage
+          ? 'http://127.0.0.1:8000/api/deepfake/image'
+          : 'http://127.0.0.1:8000/api/deepfake/video'
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -476,5 +552,28 @@ export function registerIpcHandlers(ctx: EngineContext): void {
       return { success: true, action: 'respond-permission', message: 'Response registered' }
     }
     return { success: false, action: 'respond-permission', message: 'Request not found or timed out' }
+  })
+
+  // -------------------------------------------------------
+  // MICROPHONE PERMISSION HELPERS
+  // -------------------------------------------------------
+
+  /** Returns the current macOS microphone permission status */
+  ipcMain.handle('jarvis:mic-status', async (): Promise<string> => {
+    if (process.platform === 'darwin') {
+      const { systemPreferences } = require('electron')
+      return systemPreferences.getMediaAccessStatus('microphone') as string
+    }
+    return 'granted'
+  })
+
+  /** Opens System Settings > Privacy & Security > Microphone so the user can grant access */
+  ipcMain.handle('jarvis:open-mic-settings', async (): Promise<void> => {
+    const { shell } = require('electron')
+    if (process.platform === 'darwin') {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+    } else if (process.platform === 'win32') {
+      await shell.openExternal('ms-settings:privacy-microphone')
+    }
   })
 }

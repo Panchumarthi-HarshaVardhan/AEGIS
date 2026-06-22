@@ -5,8 +5,9 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { app } from 'electron'
+import { app, Notification } from 'electron'
 import { BaseGuardian } from './base-guardian'
+import { EventBus } from '../event-bus'
 
 const IGNORED_TEMP_EXTENSIONS = new Set([
   '.crdownload', // Chrome
@@ -103,15 +104,46 @@ export class DownloadGuardian extends BaseGuardian {
 
     try {
       const scanResult = await this.scanFileViaBackend(filePath)
+      const fileName = path.basename(filePath)
       
       if (scanResult.status === 'DANGEROUS') {
         const score = scanResult.score || 95
-        this.reportThreat(score, `MALWARE INTERCEPTED: Downloaded file "${path.basename(filePath)}" failed security check. Reason: ${scanResult.description}`, {
-          file_name: path.basename(filePath),
+        this.reportThreat(score, `MALWARE INTERCEPTED: Downloaded file "${fileName}" failed security check. Reason: ${scanResult.description}`, {
+          file_name: fileName,
           file_path: filePath,
           verdict: scanResult.verdict,
           risk_score: score
         })
+
+        if (Notification.isSupported()) {
+          new Notification({
+            title: '🚨 AEGIS Malware Blocked',
+            body: `Downloaded file "${fileName}" failed safety scan.`
+          }).show()
+        }
+      } else {
+        // Safe download notification
+        const report = {
+          id: require('crypto').randomUUID(),
+          guardian: this.name,
+          score: 10, // low severity score
+          severity: 'low' as const,
+          description: `Download scan completed: "${fileName}" is SAFE. No threats detected.`,
+          details: {
+            file_name: fileName,
+            file_path: filePath,
+            verdict: 'SAFE'
+          },
+          timestamp: Date.now()
+        }
+        EventBus.getInstance().publish('threat:detected', report)
+
+        if (Notification.isSupported()) {
+          new Notification({
+            title: '✅ AEGIS File Scan',
+            body: `Downloaded file "${fileName}" is safe.`
+          }).show()
+        }
       }
     } catch (err) {
       this.logWarn(`Scan connection error on ${path.basename(filePath)}:`, err)

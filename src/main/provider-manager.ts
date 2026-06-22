@@ -28,7 +28,7 @@ export interface ProviderStatus {
 export class ProviderManager {
   private static instance: ProviderManager | null = null;
   private providers: Map<string, AIProvider> = new Map();
-  private preferredProvider: string | null = null;
+  private preferredProvider: string | null = 'groq';
   private currentActiveProvider: AIProvider | null = null;
 
   private status: ProviderStatus = {

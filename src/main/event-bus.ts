@@ -32,6 +32,7 @@ export interface EventMap {
   'system:network': [online: boolean]
   'system:battery': [level: number, charging: boolean]
   'trust:evaluated': [verdict: TrustVerdict]
+  'voice:start': []
 }
 
 /** Subscriber configuration options */

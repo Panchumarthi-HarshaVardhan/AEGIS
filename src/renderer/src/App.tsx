@@ -3,7 +3,7 @@
 // Event-driven overlay HUD router (Orb, Palette, Alert, Voice, Emergency, Workspace, Onboarding)
 // ============================================================
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Orb from './components/Orb'
 import CommandPalette from './components/CommandPalette'
 import AlertOverlay, { type SecurityEvent } from './components/AlertOverlay'
@@ -13,7 +13,7 @@ import Workspace from './components/Workspace'
 import Onboarding from './components/Onboarding'
 import { useJarvis } from './hooks/useJarvis'
 
-type WindowMode = 'orb' | 'palette' | 'alert' | 'voice' | 'emergency' | 'workspace' | 'onboarding'
+type WindowMode = 'orb' | 'palette' | 'alert' | 'voice' | 'speech-to-speech' | 'emergency' | 'workspace' | 'onboarding'
 
 const App: React.FC = () => {
   const jarvis = useJarvis()
@@ -21,6 +21,13 @@ const App: React.FC = () => {
 
   const [mode, setMode] = useState<WindowMode>('orb')
   const [activeAlert, setActiveAlert] = useState<SecurityEvent | null>(null)
+  
+  const prevModeRef = useRef<WindowMode>('orb')
+  useEffect(() => {
+    if (mode !== 'voice' && mode !== 'speech-to-speech' && mode !== 'alert') {
+      prevModeRef.current = mode
+    }
+  }, [mode])
   
   // Emergency state
   const [emergencyReason, setEmergencyReason] = useState('')
@@ -93,12 +100,24 @@ const App: React.FC = () => {
     return unsub
   }, [])
 
+  // 3.5. Listen for Voice Start Trigger events from Main process
+  useEffect(() => {
+    const unsub = window.electronAPI.onStartVoice(() => {
+      if (mode === 'onboarding') return // Ignore during onboarding
+      setMode('voice')
+    })
+    return unsub
+  }, [mode])
+
   // 4. Automatically trigger Alert Mode on incoming critical threat logs
   useEffect(() => {
     if (mode === 'onboarding') return // Ignore during onboarding
     if (securityAlerts.length > 0 && mode !== 'alert' && mode !== 'emergency') {
-      setActiveAlert(securityAlerts[0])
-      setMode('alert')
+      const latest = securityAlerts[securityAlerts.length - 1]
+      if (latest.severity !== 'low') {
+        setActiveAlert(latest)
+        setMode('alert')
+      }
     }
   }, [securityAlerts, mode])
 
@@ -131,6 +150,8 @@ const App: React.FC = () => {
           jarvis={jarvis}
           onOpenWorkspace={() => setMode('workspace')}
           onClose={() => setMode('orb')}
+          onTriggerVoice={() => setMode('voice')}
+          onTriggerSpeechToSpeech={() => setMode('speech-to-speech')}
         />
       )}
 
@@ -145,10 +166,11 @@ const App: React.FC = () => {
         />
       )}
 
-      {mode === 'voice' && (
+      {(mode === 'voice' || mode === 'speech-to-speech') && (
         <VoiceOverlay
           jarvis={jarvis}
-          onClose={() => setMode('orb')}
+          continuous={mode === 'speech-to-speech'}
+          onClose={() => setMode(prevModeRef.current)}
         />
       )}
 
@@ -156,7 +178,7 @@ const App: React.FC = () => {
         <EmergencyOverlay
           reason={emergencyReason}
           transcript={emergencyTranscript}
-          onClose={() => setMode('orb')}
+          onClose={() => setMode(prevModeRef.current)}
         />
       )}
 
@@ -164,6 +186,8 @@ const App: React.FC = () => {
         <Workspace
           jarvis={jarvis}
           onClose={() => setMode('orb')}
+          onTriggerVoice={() => setMode('voice')}
+          onTriggerSpeechToSpeech={() => setMode('speech-to-speech')}
         />
       )}
 

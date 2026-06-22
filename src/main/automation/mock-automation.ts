@@ -71,4 +71,8 @@ export class MockAutomationProvider implements AutomationProvider {
   async captureScreen(outputPath: string): Promise<void> {
     this.log('captureScreen', { outputPath })
   }
+
+  async automateApp(appName: string, taskDescription: string): Promise<void> {
+    this.log('automateApp', { appName, taskDescription })
+  }
 }

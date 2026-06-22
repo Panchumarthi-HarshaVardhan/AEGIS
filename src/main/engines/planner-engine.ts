@@ -88,7 +88,14 @@ export class PlannerEngine {
       'audit_screen_links',
       'scan_for_malware',
       'file_scan_for_malware',
-      'file_scan'
+      'file_scan',
+      'compose_email',
+      'send_whatsapp',
+      'set_alarm',
+      'set_reminder',
+      'start_voice_input',
+      'automate_app',
+      'security_status'
     ]
 
     for (let i = 0; i < plan.steps.length; i++) {
@@ -331,8 +338,9 @@ export class PlannerEngine {
   private planSystemControl(intent: ParsedIntent): ActionPlan {
     const action = intent.entities.action ?? 'unknown'
 
-    // Map common system controls to actions
-    const params: Record<string, string> = { action }
+    // Forward all intent entities as params so the action engine gets full context
+    // (e.g., url for audit_screen_links, file_path for scan_for_malware)
+    const params: Record<string, string> = { ...intent.entities, action }
 
     // Include any numeric values (e.g., volume level)
     if (intent.entities.query) {
@@ -486,7 +494,14 @@ export class PlannerEngine {
       restart: 'system_power',
       sleep: 'system_power',
       lock: 'system_power',
-      logout: 'system_power'
+      logout: 'system_power',
+      explain_screen: 'ocr_screen',
+      ocr_screen: 'ocr_screen',
+      explain_capabilities: 'noop',
+      help: 'noop',
+      start_voice_input: 'start_voice_input',
+      start_voice: 'start_voice_input',
+      voice_input: 'start_voice_input'
     }
     return mapping[action] ?? action
   }

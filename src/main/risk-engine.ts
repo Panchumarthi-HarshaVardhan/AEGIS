@@ -83,8 +83,8 @@ export class RiskEngine {
 
       this.lastAlertTimes.set(cooldownKey, now);
 
-      // Trigger UI overlay callback for alerts above the warning threshold (score >= 40)
-      if (report.score >= 40 && this.alertCallback) {
+      // Trigger UI overlay callback for alerts
+      if (this.alertCallback) {
         this.alertCallback(secEvent);
       }
     });

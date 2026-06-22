@@ -2,7 +2,24 @@
 // JARVIS Guardian AI — Main Process Entry Point
 // ============================================================
 
-import { app, BrowserWindow, shell, globalShortcut, screen } from 'electron'
+import { app, BrowserWindow, shell, globalShortcut, screen, Notification as ElectronNotification } from 'electron'
+
+// Handle EPIPE and uncaught exceptions globally — prevents Electron's crash dialog
+process.stdout.on('error', (err: any) => {
+  if (err && err.code === 'EPIPE') return
+})
+process.stderr.on('error', (err: any) => {
+  if (err && err.code === 'EPIPE') return
+})
+process.on('uncaughtException', (err: any) => {
+  // Silently ignore broken pipe errors (happen when mic/audio stream closes)
+  if (err && err.code === 'EPIPE') return
+  // For all other errors: log safely without re-throwing
+  // (re-throwing inside uncaughtException triggers Electron's built-in crash dialog)
+  try {
+    process.stderr.write(`[JARVIS] Uncaught Exception: ${err?.stack || err?.message || String(err)}\n`)
+  } catch (_) {}
+})
 
 
 
@@ -255,6 +272,40 @@ app.whenReady().then(async () => {
       callback(false)
     }
   })
+
+  // Request macOS microphone access at startup and expose status globally
+  if (process.platform === 'darwin') {
+    const { systemPreferences } = require('electron')
+    const status: string = systemPreferences.getMediaAccessStatus('microphone')
+    console.log(`[JARVIS] macOS microphone status: ${status}`)
+
+    if (status === 'not-determined') {
+      // First launch — request permission from the system
+      systemPreferences.askForMediaAccess('microphone').then((granted: boolean) => {
+        console.log(`[JARVIS] Microphone permission granted: ${granted}`)
+        process.env.JARVIS_MIC_STATUS = granted ? 'granted' : 'denied'
+      })
+    } else if (status === 'denied') {
+      // Already denied — notify user with instructions
+      process.env.JARVIS_MIC_STATUS = 'denied'
+      console.warn('[JARVIS] Microphone access denied by macOS. User must enable it in System Settings.')
+      if (ElectronNotification.isSupported()) {
+        const n = new ElectronNotification({
+          title: '🎙️ Microphone Access Required',
+          body: 'AEGIS needs mic access for voice input. Go to System Settings → Privacy & Security → Microphone and enable AEGIS.'
+        })
+        n.on('click', () => {
+          shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+        })
+        n.show()
+      }
+    } else {
+      process.env.JARVIS_MIC_STATUS = status // 'granted' | 'restricted'
+    }
+  } else {
+    // Non-macOS: assume available
+    process.env.JARVIS_MIC_STATUS = 'granted'
+  }
 
   // Instantiate V3 Event Manager and Guardian Services after app paths are active
   eventManager = new EventManager()

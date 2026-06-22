@@ -160,8 +160,10 @@ export class SecurityEngine {
     // Layer 3: Risk Classification
     const riskClassification = this.riskClassifier.classify(intent)
 
-    // Layer 4: Phishing Analysis (if URL present)
-    const phishingResult = await this.analyzeUrlIfPresent(intent)
+    // Layer 4: Phishing Analysis (if URL present and we are not doing a safety scan)
+    const action = (intent.entities.action ?? '').toLowerCase()
+    const isUrlCheck = intent.intent === 'system_control' && action === 'audit_screen_links'
+    const phishingResult = isUrlCheck ? null : await this.analyzeUrlIfPresent(intent)
 
     // Combine risk from classification and phishing analysis
     let finalRiskLevel = riskClassification.level

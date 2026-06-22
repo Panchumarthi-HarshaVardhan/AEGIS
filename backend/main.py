@@ -76,6 +76,15 @@ async def check_video_deepfake(request: FileCheckRequest):
         raise HTTPException(status_code=400, detail=res.get("error", "Analysis failed"))
     return res
 
+@app.post("/api/deepfake/image")
+async def check_image_deepfake(request: FileCheckRequest):
+    from services.deepfake_detector import DeepfakeDetector
+    detector = DeepfakeDetector()
+    res = await detector.analyze_image(request.file_path)
+    if not res.get("success", True):
+        raise HTTPException(status_code=400, detail=res.get("error", "Analysis failed"))
+    return res
+
 @app.post("/api/deepfake/audio")
 async def check_audio_deepfake(request: FileCheckRequest):
     from services.deepfake_detector import DeepfakeDetector

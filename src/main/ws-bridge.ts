@@ -8,6 +8,7 @@ import type { SecurityEngine } from './engines/security-engine'
 import type { IntentEngine } from './engines/intent-engine'
 import { PhishingDetector } from './security/phishing-detector'
 import { ProviderManager } from './provider-manager'
+import { EventBus } from './event-bus'
 
 /** Supported incoming message types from Chrome extension */
 type WSMessageType = 'url_check' | 'extract_content' | 'get_status' | 'analyzeUrl' | 'summarizePage'
@@ -330,7 +331,6 @@ export class WSBridge {
     }
 
     try {
-      const { EventBus } = require('./event-bus')
       EventBus.getInstance().publish('browser:navigation', url)
 
       const analysis = await this.phishingDetector.analyze(url)

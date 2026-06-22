@@ -159,8 +159,28 @@ export function useVoice(): UseVoiceReturn {
       recorder.start(250) // collect data every 250ms
       setIsListening(true)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Microphone access denied'
-      setError(message)
+      // Detect macOS permission denial specifically
+      const isDenied =
+        err instanceof Error &&
+        (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.message.includes('denied'))
+
+      if (isDenied) {
+        // Try to open System Settings automatically so the user can grant access
+        try {
+          const status = await window.electronAPI.getMicStatus()
+          if (status === 'denied') {
+            setError('Microphone access denied by macOS. Opening System Settings... Enable AEGIS under Privacy & Security → Microphone, then restart the app.')
+            await window.electronAPI.openMicSettings()
+          } else {
+            setError('Microphone permission denied. Please allow microphone access when prompted.')
+          }
+        } catch {
+          setError('Microphone access denied. Go to System Settings → Privacy & Security → Microphone and enable AEGIS, then restart.')
+        }
+      } else {
+        const message = err instanceof Error ? err.message : 'Microphone access denied'
+        setError(message)
+      }
       console.error('[useVoice] Start error:', err)
 
       // Clean up on error

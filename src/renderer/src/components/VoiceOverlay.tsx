@@ -1,156 +1,181 @@
 // ============================================================
-// AEGIS UI — Voice Overlay HUD
-// Siri-style floating voice panel with wave animations and transcripts
+// AEGIS — Voice Overlay
+// Siri-style voice input overlay with pulsing sphere,
+// real-time audio level feedback, and auto-send on transcript.
 // ============================================================
 
-import React, { useEffect, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useVoice } from '../hooks/useVoice'
-import { type UseJarvisReturn } from '../hooks/useJarvis'
-import * as Icons from './Icons'
+import type { UseJarvisReturn } from '../hooks/useJarvis'
 
 interface VoiceOverlayProps {
   jarvis: UseJarvisReturn
   onClose: () => void
+  continuous?: boolean
 }
 
-const VoiceOverlay: React.FC<VoiceOverlayProps> = ({
-  jarvis,
-  onClose
-}) => {
-  const { sendCommand, isProcessing, messages } = jarvis
-  const {
-    isListening,
-    isTranscribing,
-    transcript,
-    error,
-    startListening,
-    stopListening,
-    audioLevel
-  } = useVoice()
+function VoiceOverlay({ jarvis, onClose, continuous }: VoiceOverlayProps): React.JSX.Element {
+  const { isListening, isTranscribing, transcript, error, startListening, stopListening, audioLevel } =
+    useVoice()
 
-  const [status, setStatus] = useState<'listening' | 'understanding' | 'executing' | 'completed'>('listening')
-  const [voiceText, setVoiceText] = useState('')
+  const hasSentRef = useRef(false)
 
-  // 1. Auto-start voice recording on mount
+  // Auto-start listening on mount
   useEffect(() => {
-    startListening().catch((err) => {
-      console.error('[VoiceOverlay] Failed to start voice:', err)
-      setStatus('completed')
-      setVoiceText('Microphone access failed. Please check permissions.')
-    })
+    let active = true
+    const autoStart = async () => {
+      // Delay slightly to allow transition animations to settle
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      if (active) {
+        startListening().catch((err) => {
+          console.error('[VoiceOverlay] Auto-start failed:', err)
+        })
+      }
+    }
+    autoStart()
+    return () => {
+      active = false
+    }
   }, [startListening])
 
-  // 2. Process transcript once voice recording stops and transcribes
+  // Auto-send transcript and close once transcription completes
   useEffect(() => {
-    if (transcript) {
-      setVoiceText(transcript)
-      setStatus('understanding')
-      sendCommand(transcript).catch((err) => {
-        console.error('[VoiceOverlay] Command failed:', err)
-        setStatus('completed')
-        setVoiceText('Failed to process command.')
-      })
-    }
-  }, [transcript, sendCommand])
-
-  // 3. Monitor assistant response logs to show the final answer
-  useEffect(() => {
-    if (status === 'understanding') {
-      if (isProcessing) {
-        setStatus('executing')
-      }
-    } else if (status === 'executing') {
-      if (!isProcessing) {
-        const lastMsg = messages[messages.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant') {
-          setVoiceText(lastMsg.content)
-          setStatus('completed')
-        } else {
-          setStatus('completed')
-          setVoiceText('Command processed successfully.')
-        }
+    if (transcript && !hasSentRef.current) {
+      hasSentRef.current = true
+      jarvis.sendCommand(transcript, true)
+      if (!continuous) {
+        onClose()
       }
     }
-  }, [isProcessing, messages, status])
+  }, [transcript, jarvis, onClose, continuous])
 
-  // 4. Auto-dismiss voice panel 4 seconds after completion
+  // Continuous Mode: restart listening after JARVIS finishes processing
   useEffect(() => {
-    if (status === 'completed') {
-      const timeout = setTimeout(onClose, 4000)
-      return () => clearTimeout(timeout)
+    if (continuous && hasSentRef.current && !jarvis.isProcessing) {
+      const timer = setTimeout(() => {
+        hasSentRef.current = false
+        startListening().catch((err) => {
+          console.error('[VoiceOverlay] Continuous restart failed:', err)
+        })
+      }, 500)
+      return () => clearTimeout(timer)
     }
-    return undefined
-  }, [status, onClose])
+  }, [continuous, jarvis.isProcessing, startListening])
 
-  const getStatusLabel = (): string => {
-    if (error) return `Error: ${error}`
-    switch (status) {
-      case 'understanding':
-        return 'Understanding intent...'
-      case 'executing':
-        return 'Executing command...'
-      case 'completed':
-        return 'Action complete'
-      case 'listening':
-      default:
-        return isTranscribing ? 'Transcribing speech...' : 'Listening...'
-    }
-  }
+  const sphereScale = isListening ? 1 + audioLevel * 0.35 : 1
 
-  const handleSphereClick = (): void => {
-    if (isListening) {
-      stopListening()
-    } else if (status === 'completed') {
-      onClose()
-    }
-  }
+  const statusLabel = isTranscribing
+    ? 'TRANSCRIBING'
+    : isListening
+      ? (continuous ? 'CONVERSATION ACTIVE' : 'LISTENING')
+      : jarvis.isProcessing
+        ? 'PROCESSING'
+        : 'READY'
 
   return (
-    <div className="voice-overlay-container" onClick={onClose}>
-      <div className="voice-overlay animate-scale-in" onClick={(e) => e.stopPropagation()}>
-        {/* Animated pulsing wave sphere based on audio levels */}
-        <button
-          type="button"
-          className="voice-wave-sphere"
-          onClick={handleSphereClick}
-          style={{
-            transform: `scale(${1 + audioLevel * 0.2})`,
-            cursor: isListening || status === 'completed' ? 'pointer' : 'default',
-          }}
-          aria-label={isListening ? "Stop listening" : "Voice status"}
-        >
-          {isTranscribing || status === 'understanding' || status === 'executing' ? (
-            <Icons.Sparkle size={24} style={{ animation: 'spin 2s linear infinite' }} />
-          ) : (
-            <Icons.Mic size={24} />
-          )}
+    <div className="voice-overlay-container">
+      <div className="voice-overlay">
+        {/* ── Sphere with pulse rings ── */}
+        <div className="voice-wave-sphere" style={{ transform: `scale(${sphereScale})` }}>
           {isListening && (
             <>
-              <div 
-                className="voice-wave-ring" 
-                style={{ 
-                  transform: `scale(${1 + audioLevel * 0.4})`,
-                  opacity: 0.8 - audioLevel * 0.3
-                }} 
-              />
-              <div 
-                className="voice-wave-ring-secondary" 
-                style={{ 
-                  transform: `scale(${1.2 + audioLevel * 0.6})`,
-                  opacity: 0.4 - audioLevel * 0.15
-                }} 
-              />
+              <div className="voice-wave-ring" />
+              <div className="voice-wave-ring-secondary" />
             </>
           )}
-        </button>
 
-        {/* Live speech transcript */}
-        <div className="voice-transcript">
-          {voiceText || (isListening ? 'Speak now...' : 'Processing...')}
+          {/* Microphone icon */}
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="9" y="1" width="6" height="12" rx="3" />
+            <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+            <line x1="12" y1="19" x2="12" y2="23" />
+            <line x1="8" y1="23" x2="16" y2="23" />
+          </svg>
         </div>
 
-        {/* Sub-status pipeline indicators */}
-        <div className="voice-status">{getStatusLabel()}</div>
+        {/* ── Transcript / error display ── */}
+        <div className="voice-transcript">
+          {error
+            ? error
+            : transcript
+              ? transcript
+              : isListening
+                ? 'Speak now…'
+                : isTranscribing
+                  ? 'Processing…'
+                  : 'Tap the microphone to begin'}
+        </div>
+
+        {/* ── Status label ── */}
+        <div className="voice-status">{statusLabel}</div>
+
+        {/* ── Controls ── */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+          {isListening ? (
+            <button className="btn btn-danger" onClick={stopListening}>
+              {/* Stop icon */}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                stroke="none"
+              >
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+              </svg>
+              Stop
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={startListening}
+              disabled={isTranscribing}
+            >
+              {/* Mic icon */}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="9" y="1" width="6" height="12" rx="3" />
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+              </svg>
+              Start
+            </button>
+          )}
+
+          <button className="btn btn-glass" onClick={onClose}>
+            {/* Close / X icon */}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+            Close
+          </button>
+        </div>
       </div>
     </div>
   )

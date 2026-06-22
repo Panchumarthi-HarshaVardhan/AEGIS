@@ -14,6 +14,79 @@ class DeepfakeDetector:
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         self.face_cascade = cv2.CascadeClassifier(cascade_path)
 
+    async def analyze_image(self, file_path: str) -> Dict[str, Any]:
+        """Runs face analysis and compression artifact scanning on a single image file."""
+        if not os.path.exists(file_path):
+            return {"success": False, "error": "Image file not found"}
+
+        frame = cv2.imread(file_path)
+        if frame is None:
+            return {"success": False, "error": "Could not read image file"}
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+
+        detected_faces = len(faces)
+        anomaly_scores = []
+        blur_scores = []
+
+        if detected_faces > 0:
+            for (x, y, w, h) in faces:
+                face_roi = gray[y:y+h, x:x+w]
+                laplacian_var = cv2.Laplacian(face_roi, cv2.CV_64F).var()
+                blur_scores.append(laplacian_var)
+
+                f = np.fft.fft2(face_roi)
+                fshift = np.fft.fftshift(f)
+                magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+                
+                rows, cols = face_roi.shape
+                crow, ccol = rows // 2, cols // 2
+                magnitude_spectrum[crow-10:crow+10, ccol-10:ccol+10] = 0
+                high_freq_mean = np.mean(magnitude_spectrum)
+                anomaly_scores.append(high_freq_mean)
+
+        prob = 0.15  # baseline
+        reasons = []
+
+        if detected_faces == 0:
+            f = np.fft.fft2(gray)
+            fshift = np.fft.fftshift(f)
+            magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+            rows, cols = gray.shape
+            crow, ccol = rows // 2, cols // 2
+            magnitude_spectrum[crow-20:crow+20, ccol-20:ccol+20] = 0
+            high_freq_mean = np.mean(magnitude_spectrum)
+            if high_freq_mean > 30:
+                prob += 0.35
+                reasons.append("High-frequency anomalies detected in image background (GAN/diffusion noise pattern).")
+            verdict = "DEEPFAKE" if prob >= 0.50 else "AUTHENTIC"
+        else:
+            avg_blur = np.mean(blur_scores) if blur_scores else 0
+            if avg_blur < 80:
+                prob += 0.35
+                reasons.append("Detected unusually smooth facial texture (sign of GAN/deep learning blending).")
+            
+            avg_freq = np.mean(anomaly_scores) if anomaly_scores else 0
+            if avg_freq > 25:
+                prob += 0.40
+                reasons.append("High-frequency spectral anomalies detected in facial regions (grid artifacts).")
+
+            prob = min(0.99, prob)
+            verdict = "DEEPFAKE" if prob >= 0.65 else "SUSPICIOUS" if prob >= 0.40 else "AUTHENTIC"
+
+        return {
+            "success": True,
+            "type": "image",
+            "verdict": verdict,
+            "probability": prob,
+            "metadata": {
+                "faces_found": detected_faces,
+                "resolution": f"{frame.shape[1]}x{frame.shape[0]}"
+            },
+            "reasons": reasons if reasons else ["No digital manipulations detected. Frequencies and texture profiles are consistent with authentic photography."]
+        }
+
     async def analyze_video(self, file_path: str) -> Dict[str, Any]:
         """Runs face analysis and compression artifact scanning on video frames."""
         if not os.path.exists(file_path):

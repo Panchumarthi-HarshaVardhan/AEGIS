@@ -193,4 +193,9 @@ export class WindowsAutomation implements AutomationProvider {
     if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return url
     return `https://${url}`
   }
+
+  async automateApp(appName: string, taskDescription: string): Promise<void> {
+    console.log(`[WindowsAutomation] automateApp stub triggered for ${appName}: ${taskDescription}`)
+    throw new Error('OS application GUI automation is not fully supported on Windows. Please use macOS.')
+  }
 }

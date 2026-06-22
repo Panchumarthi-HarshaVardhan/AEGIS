@@ -45,4 +45,8 @@ export interface AutomationProvider {
 
   /** Captures active desktop screen and writes PNG to path */
   captureScreen(outputPath: string): Promise<void>
+
+  /** Performs a user-described automation task within a specific target application */
+  automateApp(appName: string, taskDescription: string): Promise<void>
 }
+

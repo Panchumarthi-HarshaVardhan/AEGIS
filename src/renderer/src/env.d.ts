@@ -100,11 +100,12 @@ interface SystemStatus {
 
 interface ElectronAPI {
   // Commands
-  sendCommand: (text: string) => Promise<JarvisResponse>
+  sendCommand: (text: string, isVoiceInput?: boolean, attachmentPath?: string) => Promise<JarvisResponse>
   approveAction: (approvalId: string, approved: boolean) => Promise<ActionResult>
 
   // Voice
   transcribeAudio: (audioBuffer: ArrayBuffer) => Promise<string>
+  synthesizeSpeech: (text: string) => Promise<string>
 
   // Security
   analyzeUrl: (url: string) => Promise<PhishingAnalysis>
@@ -119,7 +120,7 @@ interface ElectronAPI {
   checkDeepfake: (filePath: string) => Promise<any>
   summarizeDocument: (filePath: string) => Promise<any>
   ocrScreen: () => Promise<string>
-  setWindowMode: (mode: 'orb' | 'palette' | 'alert' | 'workspace' | 'onboarding') => Promise<void>
+  setWindowMode: (mode: 'orb' | 'palette' | 'alert' | 'workspace' | 'onboarding' | 'voice' | 'emergency') => Promise<void>
   getPreference: (key: string) => Promise<string | null>
   setPreference: (key: string, value: string) => Promise<void>
 
@@ -129,6 +130,11 @@ interface ElectronAPI {
   onStatusUpdate: (callback: (status: SystemStatus) => void) => () => void
   onTogglePalette: (callback: () => void) => () => void
   onEmergencyTriggered: (callback: (reason: string, transcript: string) => void) => () => void
+  onStartVoice: (callback: () => void) => () => void
+
+  // Microphone permission helpers
+  getMicStatus: () => Promise<string>
+  openMicSettings: () => Promise<void>
 }
 
 declare global {
